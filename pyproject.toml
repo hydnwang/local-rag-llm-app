@@ -6,5 +6,5 @@ dependencies = [
     "llama-index-core>=0.14.23",
     "llama-index-embeddings-huggingface>=0.7.0",
     "llama-index-vector-stores-qdrant>=0.10.2",
-    "qdrant-client>=1.19.0",
+    "qdrant-client==1.16.0",
 ]
