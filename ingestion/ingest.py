@@ -1,4 +1,6 @@
 import argparse
+import sys
+from pathlib import Path
 
 from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
@@ -6,9 +8,8 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
-QDRANT_URL = "http://localhost:6333"
-COLLECTION_NAME = "documents"
-EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import QDRANT_URL, COLLECTION_NAME, EMBED_MODEL_NAME
 
 
 def ingest(file_path: str) -> None:
