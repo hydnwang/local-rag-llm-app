@@ -8,6 +8,8 @@ dependencies = [
     "llama-index-core>=0.14.23",
     "llama-index-embeddings-huggingface>=0.7.0",
     "llama-index-vector-stores-qdrant>=0.10.2",
+    "python-multipart>=0.0.32",
     "qdrant-client==1.16.0",
+    "streamlit>=1.61.1",
     "uvicorn>=0.52.1",
 ]

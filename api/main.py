@@ -1,8 +1,10 @@
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from llama_index.core import VectorStoreIndex
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -18,6 +20,7 @@ from config import (
     QDRANT_URL,
     TOP_K,
 )
+from ingestion.ingest import ingest
 
 app = FastAPI()
 
@@ -70,3 +73,14 @@ async def query(request: QueryRequest) -> QueryResponse:
     ]
 
     return QueryResponse(answer=answer, sources=sources)
+
+
+@app.post("/ingest")
+async def ingest_file(file: UploadFile) -> dict:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / file.filename
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        ingest(str(tmp_path))
+
+    return {"status": "ok", "file_name": file.filename}
