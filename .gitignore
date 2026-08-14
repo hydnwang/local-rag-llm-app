@@ -1,5 +1,6 @@
-# Secrets
+# Env
 .env
+.dagster_home/
 
 # Python
 .venv/

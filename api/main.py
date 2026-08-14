@@ -14,13 +14,14 @@ from qdrant_client import QdrantClient
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import (
     COLLECTION_NAME,
+    DAGSTER_HOST,
+    DAGSTER_PORT,
     EMBED_MODEL_NAME,
     OLLAMA_MODEL,
     OLLAMA_URL,
     QDRANT_URL,
     TOP_K,
 )
-from ingestion.ingest import ingest
 
 app = FastAPI()
 
@@ -77,10 +78,33 @@ async def query(request: QueryRequest) -> QueryResponse:
 
 @app.post("/ingest")
 async def ingest_file(file: UploadFile) -> dict:
+    import asyncio
+
+    from dagster_graphql import DagsterGraphQLClient
+    from dagster._core.storage.dagster_run import DagsterRunStatus
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / file.filename
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        ingest(str(tmp_path))
 
-    return {"status": "ok", "file_name": file.filename}
+        client = DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT)
+        run_id = client.submit_job_execution(
+            "ingest_job",
+            run_config={"ops": {"raw_documents": {"config": {"file_path": str(tmp_path)}}}},
+        )
+
+        terminal_states = {
+            DagsterRunStatus.SUCCESS,
+            DagsterRunStatus.FAILURE,
+            DagsterRunStatus.CANCELED,
+        }
+        status = client.get_run_status(run_id)
+        while status not in terminal_states:
+            await asyncio.sleep(1)
+            status = client.get_run_status(run_id)
+
+    if status != DagsterRunStatus.SUCCESS:
+        return {"status": "error", "file_name": file.filename, "run_id": run_id}
+
+    return {"status": "ok", "file_name": file.filename, "run_id": run_id}
