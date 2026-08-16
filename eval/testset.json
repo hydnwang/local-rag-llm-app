@@ -1,0 +1,82 @@
+[
+  {
+    "user_input": "Who created Game of Thrones for HBO?",
+    "reference": "David Benioff and D. B. Weiss created Game of Thrones for HBO."
+  },
+  {
+    "user_input": "What date did Game of Thrones premiere?",
+    "reference": "Game of Thrones premiered on HBO on April 17, 2011."
+  },
+  {
+    "user_input": "How many total episodes did Game of Thrones have, and over how many seasons?",
+    "reference": "Game of Thrones had 73 episodes broadcast over eight seasons."
+  },
+  {
+    "user_input": "Who plays Rhaenyra Targaryen in House of the Dragon?",
+    "reference": "Emma D'Arcy plays Rhaenyra Targaryen; Milly Alcock portrays her as a young woman in season 1."
+  },
+  {
+    "user_input": "What book is House of the Dragon based on?",
+    "reference": "House of the Dragon is based on parts of George R. R. Martin's 2018 book Fire & Blood."
+  },
+  {
+    "user_input": "Who composed the music for House of the Dragon?",
+    "reference": "Ramin Djawadi composed the score for House of the Dragon."
+  },
+  {
+    "user_input": "Which visual effects studio worked on Game of Thrones, and did they win any Emmy Awards for it?",
+    "reference": "Pixomondo was the lead visual effects producer starting in later seasons; the show won for Outstanding Special Visual Effects in seven consecutive seasons, with Pixomondo's work on \"Valar Morghulis,\" \"Valar Dohaeris,\" and \"The Children\" specifically credited with Emmy wins."
+  },
+  {
+    "user_input": "What were the main filming locations used across Game of Thrones' seasons?",
+    "reference": "Filming took place in Northern Ireland (Paint Hall Studios, Belfast, and various exteriors), Malta (season 1 southern scenes), Croatia (Dubrovnik, from season 2 onward), Iceland (scenes north of the Wall), Morocco (Essaouira, for Daenerys's Essos scenes), and Spain (Seville, Córdoba, and other locations from season 5 onward)."
+  },
+  {
+    "user_input": "Why did the show's creators decide to portray House Velaryon as Black in the television series, given how they're described in the novels?",
+    "reference": "In the novels, House Velaryon members are described with silver-gold hair, pale skin, and violet eyes similar to Targaryens, but showrunners Ryan Condal and Miguel Sapochnik wanted more racial diversity in casting; Condal noted Martin himself had considered making the Velaryons a house of Black aristocrats from Valyria while writing the novels."
+  },
+  {
+    "user_input": "What is the \"Dance of the Dragons\" and when does it take place relative to Game of Thrones?",
+    "reference": "The Dance of the Dragons is a devastating Targaryen civil war of succession depicted in House of the Dragon; the series is set about 172 years before the events of Game of Thrones and the birth of Daenerys Targaryen."
+  },
+  {
+    "user_input": "How does the budget per episode of House of the Dragon compare to Game of Thrones?",
+    "reference": "House of the Dragon's first season cost nearly $200 million total, averaging just below $20 million per episode. Game of Thrones cost around $100 million per season, starting near $6 million per episode in early seasons and rising to about $15 million per episode by its eighth and final season."
+  },
+  {
+    "user_input": "Which composer worked on both Game of Thrones and House of the Dragon, and did he reuse any music between the two shows?",
+    "reference": "Ramin Djawadi composed music for both series; House of the Dragon retained the original Game of Thrones theme music, which debuts in the opening credits of the second episode, and also reused character motifs like the \"Dracarys\" Dragon theme."
+  },
+  {
+    "user_input": "Compare the premiere-day/premiere-week viewership figures reported for Game of Thrones' final season and House of the Dragon's first season.",
+    "reference": "House of the Dragon's premiere was viewed by an estimated 9.99 million viewers on its first night, rising to nearly 25 million within a week. Game of Thrones' final season premiere (\"Winterfell\") had 17.4 million viewers on HBO platforms, while illegal downloads for that premiere reached 55 million."
+  },
+  {
+    "user_input": "Which visual effects studio contributed to both shows?",
+    "reference": "Pixomondo worked on visual effects for both Game of Thrones and House of the Dragon."
+  },
+  {
+    "user_input": "Based on the article, why do critics say the final two seasons of Game of Thrones became more reliant on spectacle rather than character-driven storytelling?",
+    "reference": "The article attributes this to the show running out of new source material from the books, causing the series to become less character-driven and more reliant on big twists and spectacle, particularly in season eight."
+  },
+  {
+    "user_input": "What tension is described between author George R. R. Martin and showrunner Ryan Condal, and what prompted it?",
+    "reference": "Martin criticized changes Condal and HBO made to the Fire & Blood source material, including cutting the character Maelor Targaryen from season 2, in a since-deleted 2024 blog post; Condal acknowledged the difficulty of adapting the expansive narrative within TV constraints and expressed hope for reconciliation."
+  },
+  {
+    "user_input": "What language-learning company began offering High Valyrian courses, and when?",
+    "reference": "Duolingo began offering High Valyrian courses in 2017."
+  },
+  {
+    "user_input": "When did House of the Dragon's second season premiere?",
+    "reference": "House of the Dragon's second season premiered on June 16, 2024."
+  },
+  {
+    "user_input": "What is the name of the actor who plays Bran Stark's dire wolf in Game of Thrones?",
+    "reference": "The article does not mention the name of an actor playing Bran Stark's dire wolf, or any information about the dire wolf casting/performers."
+  },
+  {
+    "user_input": "What was House of the Dragon's total box office revenue during its IMAX theatrical release?",
+    "reference": "The article does not mention an IMAX theatrical release for House of the Dragon. (This detail appears in the Game of Thrones article instead, referring to season 4's IMAX release, not House of the Dragon.)"
+  }
+]
