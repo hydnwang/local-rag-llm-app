@@ -1,10 +1,11 @@
 """
-Unified RAG evaluation: retrieve, generate, score 4 LLM-judge metrics, and
-compute 4 candidate signals for the future LangGraph `assess` node — all
-in-process (no FastAPI server required). Only Qdrant and Ollama need to be
-running.
+Unified RAG evaluation: runs each question through the real LangGraph flow
+(retrieve -> assess -> generate | reformulate/retry | insufficient_context)
+and scores 4 LLM-judge metrics — all in-process (no FastAPI server required).
+Only Qdrant and Ollama need to be running.
 
-Replaces run_testset.py + score_testset.py.
+Replaces run_testset.py + score_testset.py. Uses api/graph.py directly so the
+eval measures the actual system, including retry/assess behavior.
 
 Input:  eval/testset.json
 Output: eval/eval_<YYYYMMDD>_<HHMMSS>.json
@@ -16,36 +17,21 @@ Usage:
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 import httpx
-import numpy as np
 from llama_index.core import VectorStoreIndex
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from sentence_transformers import CrossEncoder
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import (
-    COLLECTION_NAME,
-    EMBED_MODEL_NAME,
-    OLLAMA_MODEL,
-    OLLAMA_URL,
-    QDRANT_URL,
-    TOP_K,
-)
+from config import COLLECTION_NAME, EMBED_MODEL_NAME, OLLAMA_MODEL, OLLAMA_URL, QDRANT_URL, TOP_K
+from api.graph import build_graph
 
 INPUT_PATH = Path(__file__).resolve().parent / "testset.json"
-RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-STOPWORDS = {
-    "a", "an", "the", "is", "are", "was", "were", "did", "does", "do",
-    "what", "who", "whom", "which", "when", "where", "why", "how",
-    "and", "or", "for", "in", "on", "of", "to", "with", "by", "at",
-    "as", "it", "its", "this", "that", "these", "those", "be", "been",
-}
 
 # --- LLM-judge metrics (unchanged from score_testset.py) ---
 
@@ -129,59 +115,16 @@ def score_metrics(client: httpx.Client, question: str, reference: str, response_
     }
 
 
-# --- Candidate `assess` signals (diagnostic only, not yet used to gate anything) ---
-
-def extract_keywords(question: str) -> list[str]:
-    words = re.findall(r"[A-Za-z']+", question.lower())
-    return [w for w in words if w not in STOPWORDS and len(w) > 2]
-
-
-def compute_signals(
-    question: str, nodes, node_embeddings: list[list[float]], reranker: CrossEncoder
-) -> dict:
-    texts = [node.get_content() for node in nodes]
-    sim_scores = [node.score for node in nodes]
-
-    # Signal: cross-encoder max relevance
-    pairs = [(question, text) for text in texts]
-    rerank_scores = reranker.predict(pairs)
-    cross_encoder_max = float(max(rerank_scores))
-
-    # Signal: score gap (top-1 minus top-2 similarity)
-    sorted_scores = sorted(sim_scores, reverse=True)
-    score_gap_top1_top2 = float(sorted_scores[0] - sorted_scores[1]) if len(sorted_scores) > 1 else None
-
-    # Signal: redundancy (mean pairwise cosine similarity among retrieved chunk embeddings)
-    vecs = np.array(node_embeddings)
-    norm_vecs = vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
-    sim_matrix = norm_vecs @ norm_vecs.T
-    n = len(vecs)
-    upper_tri = sim_matrix[np.triu_indices(n, k=1)]
-    redundancy_mean_pairwise = float(upper_tri.mean()) if len(upper_tri) > 0 else None
-
-    # Signal: keyword overlap (any question keyword appears in any retrieved chunk)
-    keywords = extract_keywords(question)
-    combined_text = " ".join(texts).lower()
-    keyword_overlap = any(kw in combined_text for kw in keywords) if keywords else None
-
-    return {
-        "cross_encoder_max": cross_encoder_max,
-        "score_gap_top1_top2": score_gap_top1_top2,
-        "redundancy_mean_pairwise": redundancy_mean_pairwise,
-        "keyword_overlap": keyword_overlap,
-    }
-
-
 def main() -> None:
     testset = json.loads(INPUT_PATH.read_text())
 
-    print("Loading models (embedding + reranker)...")
+    print("Loading embedding model and building graph...")
     qdrant_client = QdrantClient(url=QDRANT_URL)
     vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
     embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
     index = VectorStoreIndex.from_vector_store(vector_store, embed_model=embed_model)
     retriever = index.as_retriever(similarity_top_k=TOP_K)
-    reranker = CrossEncoder(RERANKER_MODEL_NAME)
+    rag_graph = build_graph(retriever)
 
     results = []
     with httpx.Client(timeout=120.0) as client:
@@ -190,40 +133,34 @@ def main() -> None:
             reference = item["reference"]
             print(f"[{i}/{len(testset)}] {question}")
 
-            nodes = retriever.retrieve(question)
-            node_embeddings = [embed_model.get_text_embedding(n.get_content()) for n in nodes]
-            context = "\n\n".join(node.get_content() for node in nodes)
-
-            prompt = (
-                f"Answer the question using only the context below. "
-                f"If the context doesn't contain the answer, say so.\n\n"
-                f"Context:\n{context}\n\nQuestion: {question}"
+            start = time.monotonic()
+            graph_result = rag_graph.invoke(
+                {"question": question, "original_question": question, "retry_count": 0}
             )
-            gen_response = client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            )
-            gen_response.raise_for_status()
-            answer = gen_response.json()["response"]
+            elapsed_seconds = round(time.monotonic() - start, 1)
+            print(f"    -> {graph_result['assessment']} in {elapsed_seconds}s")
 
-            metrics = score_metrics(client, question, reference, answer, context)
-            signals = compute_signals(question, nodes, node_embeddings, reranker)
+            final_sources = graph_result["sources"]
+            context = "\n\n".join(s["text"] for s in final_sources)
+
+            start_metrics = time.monotonic()
+            metrics = score_metrics(client, question, reference, graph_result["answer"], context)
+            elapsed_seconds_metrics = round(time.monotonic() - start_metrics, 1)
+            print(f"    -> metrics scored in {elapsed_seconds_metrics}s")
+            print(f"    -> total time used: {round(time.monotonic() - start, 1)}s")
 
             results.append(
                 {
                     "user_input": question,
                     "reference": reference,
-                    "response": answer,
-                    "retrieved_contexts": [
-                        {
-                            "file_name": node.metadata.get("file_name", "unknown"),
-                            "text": node.get_content(),
-                            "similarity_score": node.score,
-                        }
-                        for node in nodes
-                    ],
+                    "response": graph_result["answer"],
+                    "path_taken": graph_result["assessment"],
+                    "retry_count": graph_result["retry_count"],
+                    "elapsed_seconds": elapsed_seconds,
+                    "assess_reasoning": graph_result["assess_reasoning"],
+                    "retrieval_history": graph_result["retrieval_history"],
+                    "retrieved_contexts": final_sources,
                     "metrics": metrics,
-                    "candidate_signals": signals,
                 }
             )
 
@@ -235,6 +172,23 @@ def main() -> None:
             "parsed": f"{len(scores)}/{len(results)}",
         }
 
+    path_counts: dict[str, int] = {}
+    path_timings: dict[str, list[float]] = {}
+    for r in results:
+        path_counts[r["path_taken"]] = path_counts.get(r["path_taken"], 0) + 1
+        path_timings.setdefault(r["path_taken"], []).append(r["elapsed_seconds"])
+    retried_count = sum(1 for r in results if r["retry_count"] > 0)
+    summary["path_breakdown"] = path_counts
+    summary["retry_rate"] = f"{retried_count}/{len(results)}"
+
+    all_timings = [r["elapsed_seconds"] for r in results]
+    summary["timing"] = {
+        "average_seconds": round(sum(all_timings) / len(all_timings), 1) if all_timings else None,
+        "by_path_average_seconds": {
+            path: round(sum(times) / len(times), 1) for path, times in path_timings.items()
+        },
+    }
+
     output = {"summary": summary, "results": results}
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -243,9 +197,14 @@ def main() -> None:
 
     print(f"\nWrote {len(results)} records to {output_path}\n")
     print("Average scores:")
-    for metric_name, s in summary.items():
+    for metric_name in METRIC_INSTRUCTIONS:
+        s = summary[metric_name]
         avg_str = f"{s['average']:.2f}" if s["average"] is not None else "no valid scores"
         print(f"  {metric_name}: {avg_str}  ({s['parsed']} parsed)")
+    print(f"\nPath breakdown: {path_counts}")
+    print(f"Retry rate: {summary['retry_rate']}")
+    print(f"Average time: {summary['timing']['average_seconds']}s")
+    print(f"By path: {summary['timing']['by_path_average_seconds']}")
 
 
 if __name__ == "__main__":

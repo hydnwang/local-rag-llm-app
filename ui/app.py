@@ -5,6 +5,17 @@ API_URL = "http://localhost:8000"
 
 st.title("RAG Q&A Demo")
 
+
+def render_retrieval_history(history):
+    if not history:
+        return
+    with st.expander(f"🔁 Retrieval history ({len(history)} attempts) ▸"):
+        for attempt in history:
+            st.markdown(f"**Attempt {attempt['attempt']}** — query used: _{attempt['question_used']}_")
+            for i, source in enumerate(attempt["sources"], start=1):
+                st.write(f"{i}. [{source['file_name']}] {source['text'][:200]}...")
+
+
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -28,6 +39,12 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
+        if message["role"] == "assistant" and message.get("path_taken"):
+            st.caption(f"Path: {message['path_taken']} · Retries: {message['retry_count']}")
+            if message.get("assess_reasoning"):
+                st.caption(f"Assess reasoning: {message['assess_reasoning']}")
+        if message["role"] == "assistant" and message.get("retrieval_history"):
+            render_retrieval_history(message["retrieval_history"])
         if message["role"] == "assistant" and message.get("sources"):
             for i, source in enumerate(message["sources"], start=1):
                 with st.expander(f"Source {i}: {source['file_name']} ▸"):
@@ -47,6 +64,9 @@ if question := st.chat_input("Ask a question about your documents"):
             data = response.json()
 
         st.write(data["answer"])
+        st.caption(f"Path: {data['path_taken']} · Retries: {data['retry_count']}")
+        st.caption(f"Assess reasoning: {data['assess_reasoning']}")
+        render_retrieval_history(data["retrieval_history"])
         for i, source in enumerate(data["sources"], start=1):
             with st.expander(f"Source {i}: {source['file_name']} ▸"):
                 st.write(source["text"])
@@ -56,5 +76,9 @@ if question := st.chat_input("Ask a question about your documents"):
             "role": "assistant",
             "content": data["answer"],
             "sources": data["sources"],
+            "path_taken": data["path_taken"],
+            "assess_reasoning": data["assess_reasoning"],
+            "retry_count": data["retry_count"],
+            "retrieval_history": data["retrieval_history"],
         }
     )
