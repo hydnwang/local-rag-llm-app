@@ -11,6 +11,7 @@ dependencies = [
     "llama-index-embeddings-huggingface>=0.7.0",
     "langgraph>=1.2.0",
     "llama-index-vector-stores-qdrant>=0.10.2",
+    "prometheus-client>=0.21.0",
     "python-multipart>=0.0.32",
     "qdrant-client==1.16.0",
     "streamlit>=1.61.1",

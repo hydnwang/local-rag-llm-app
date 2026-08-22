@@ -1,17 +1,42 @@
+import functools
 import json
+import logging
 import operator
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Annotated, TypedDict
 
 import httpx
 from langgraph.graph import END, StateGraph
+from prometheus_client import Histogram
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import OLLAMA_MODEL, OLLAMA_URL
 
 MAX_RETRIES = 1
+
+NODE_DURATION_SECONDS = Histogram(
+    "rag_node_duration_seconds",
+    "Time spent in each RAG graph node",
+    ["node"],
+)
+
+
+def _timed_node(name: str):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(state):
+            start = time.monotonic()
+            try:
+                return func(state)
+            finally:
+                NODE_DURATION_SECONDS.labels(node=name).observe(time.monotonic() - start)
+
+        return wrapper
+
+    return decorator
 
 ASSESS_PROMPT = """You are evaluating whether the retrieved context is sufficient to \
 answer the question. Choose one of three verdicts:
@@ -84,8 +109,16 @@ def build_graph(retriever):
     """retriever: a LlamaIndex retriever (e.g. index.as_retriever(...)), injected
     from main.py so this module doesn't own vector store / embedding setup."""
 
+    retrieve_logger = logging.getLogger("retrieve")
+    assess_logger = logging.getLogger("assess")
+    reformulate_logger = logging.getLogger("reformulate")
+    generate_logger = logging.getLogger("generate")
+    insufficient_logger = logging.getLogger("insufficient_context")
+
+    @_timed_node("retrieve")
     def retrieve(state: RAGState) -> dict:
         nodes = retriever.retrieve(state["question"])
+        retrieve_logger.info(f"retrieved {len(nodes)} chunks")
         attempt_record = {
             "attempt": state["retry_count"] + 1,
             "question_used": state["question"],
@@ -96,8 +129,9 @@ def build_graph(retriever):
         }
         return {"nodes": nodes, "retrieval_history": [attempt_record]}
 
+    @_timed_node("assess")
     def assess(state: RAGState) -> dict:
-        context = "\n\n".join(node.get_content() for node in state["nodes"])
+        context = "\n\n".join(node.get_content() for node in state["nodes"][:3])
         with httpx.Client(timeout=120.0) as client:
             raw = _call_ollama(
                 client, ASSESS_PROMPT.format(question=state["original_question"], context=context)
@@ -106,14 +140,18 @@ def build_graph(retriever):
         verdict = judged["verdict"]
 
         if verdict in ("yes", "partial"):
+            assess_logger.info(f"verdict=pass ({verdict}) | retry_count={state['retry_count']}")
             return {"assessment": f"pass ({verdict})", "assess_reasoning": judged["reasoning"]}
         if state["retry_count"] < MAX_RETRIES:
+            assess_logger.info(f"verdict=retry | retry_count={state['retry_count']}")
             return {"assessment": "retry", "assess_reasoning": judged["reasoning"]}
+        assess_logger.info(f"verdict=insufficient | retry_count={state['retry_count']}")
         return {"assessment": "insufficient", "assess_reasoning": judged["reasoning"]}
 
     def route_after_assess(state: RAGState) -> str:
         return "generate" if state["assessment"].startswith("pass") else state["assessment"]
 
+    @_timed_node("reformulate")
     def reformulate(state: RAGState) -> dict:
         context = "\n\n".join(node.get_content() for node in state["nodes"])
         with httpx.Client(timeout=120.0) as client:
@@ -121,25 +159,34 @@ def build_graph(retriever):
                 client,
                 REFORMULATE_PROMPT.format(question=state["original_question"], context=context),
             )
-        return {"question": new_question.strip(), "retry_count": state["retry_count"] + 1}
+        new_question = new_question.strip()
+        reformulate_logger.info(f"rewritten question={new_question}")
+        return {"question": new_question, "retry_count": state["retry_count"] + 1}
 
+    @_timed_node("generate")
     def generate(state: RAGState) -> dict:
         context = "\n\n".join(node.get_content() for node in state["nodes"])
         prompt = (
             f"Answer the question using only the context below. "
-            f"If the context doesn't contain the answer, say so.\n\n"
+            f"If the context doesn't contain the answer, say so. "
+            f"If the context contains numbers or facts that are related to the question but "
+            f"do not directly answer it, point that out explicitly rather than substituting "
+            f"them as if they were the answer.\n\n"
             f"Context:\n{context}\n\nQuestion: {state['original_question']}"
         )
         with httpx.Client(timeout=120.0) as client:
             answer = _call_ollama(client, prompt)
 
+        generate_logger.info("answer generated")
         sources = [
             {"file_name": node.metadata.get("file_name", "unknown"), "text": node.get_content()}
             for node in state["nodes"]
         ]
         return {"answer": answer, "sources": sources}
 
+    @_timed_node("insufficient_context")
     def insufficient_context(state: RAGState) -> dict:
+        insufficient_logger.info("returning insufficient-context response")
         sources = [
             {"file_name": node.metadata.get("file_name", "unknown"), "text": node.get_content()}
             for node in state["nodes"]

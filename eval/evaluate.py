@@ -119,6 +119,14 @@ def main() -> None:
     testset = json.loads(INPUT_PATH.read_text())
 
     print("Loading embedding model and building graph...")
+    print("----- Configurations -----")
+    print(f"{OLLAMA_URL=}")
+    print(f"{OLLAMA_MODEL=}")
+    print(f"{QDRANT_URL=}")
+    print(f"{EMBED_MODEL_NAME=}")
+    print(f"{COLLECTION_NAME=}")
+    print(f"{TOP_K=}")
+    
     qdrant_client = QdrantClient(url=QDRANT_URL)
     vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
     embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
@@ -127,6 +135,7 @@ def main() -> None:
     rag_graph = build_graph(retriever)
 
     results = []
+    print("----- Evaluation Begins -----")
     with httpx.Client(timeout=120.0) as client:
         for i, item in enumerate(testset, start=1):
             question = item["user_input"]
@@ -194,6 +203,7 @@ def main() -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = Path(__file__).resolve().parent / f"eval_{timestamp}.json"
     output_path.write_text(json.dumps(output, indent=2))
+    print("----- Evaluation Ends -----")
 
     print(f"\nWrote {len(results)} records to {output_path}\n")
     print("Average scores:")
