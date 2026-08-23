@@ -13,7 +13,7 @@ def render_retrieval_history(history):
         for attempt in history:
             st.markdown(f"**Attempt {attempt['attempt']}** — query used: _{attempt['question_used']}_")
             for i, source in enumerate(attempt["sources"], start=1):
-                st.write(f"{i}. [{source['file_name']}] {source['text'][:200]}...")
+                st.write(f"{i}. [{source['file_name']} · {source['content_type']}] {source['text'][:200]}...")
 
 
 if "uploader_key" not in st.session_state:
@@ -22,7 +22,7 @@ if "uploader_key" not in st.session_state:
 with st.sidebar:
     st.header("Upload a document")
     uploaded_file = st.file_uploader(
-        "Choose a .txt file", type=["txt"], key=st.session_state.uploader_key
+        "Choose a .txt, .pdf, or .md file", type=["txt", "pdf", "md"], key=st.session_state.uploader_key
     )
     if uploaded_file is not None and st.button("Ingest"):
         with st.spinner("Ingesting..."):
@@ -47,7 +47,7 @@ for message in st.session_state.messages:
             render_retrieval_history(message["retrieval_history"])
         if message["role"] == "assistant" and message.get("sources"):
             for i, source in enumerate(message["sources"], start=1):
-                with st.expander(f"Source {i}: {source['file_name']} ▸"):
+                with st.expander(f"Source {i}: {source['file_name']} · {source['content_type']} ▸"):
                     st.write(source["text"])
 
 if question := st.chat_input("Ask a question about your documents"):
@@ -68,7 +68,7 @@ if question := st.chat_input("Ask a question about your documents"):
         st.caption(f"Assess reasoning: {data['assess_reasoning']}")
         render_retrieval_history(data["retrieval_history"])
         for i, source in enumerate(data["sources"], start=1):
-            with st.expander(f"Source {i}: {source['file_name']} ▸"):
+            with st.expander(f"Source {i}: {source['file_name']} · {source['content_type']} ▸"):
                 st.write(source["text"])
 
     st.session_state.messages.append(

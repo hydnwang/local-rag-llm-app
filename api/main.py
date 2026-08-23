@@ -57,6 +57,7 @@ class QueryRequest(BaseModel):
 
 class Source(BaseModel):
     file_name: str
+    content_type: str
     text: str
 
 

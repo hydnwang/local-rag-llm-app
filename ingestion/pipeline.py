@@ -4,13 +4,15 @@ from pathlib import Path
 import dagster as dg
 from llama_index.core import Document, SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.schema import BaseNode
+from llama_index.core.schema import BaseNode, TextNode
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import COLLECTION_NAME, EMBED_MODEL_NAME, QDRANT_URL
+from pdf_loader import load_pdf
+from md_loader import load_md
 
 
 class IngestConfig(dg.Config):
@@ -19,13 +21,22 @@ class IngestConfig(dg.Config):
 
 @dg.asset
 def raw_documents(config: IngestConfig) -> list[Document]:
+    if config.file_path.endswith(".pdf"):
+        return load_pdf(config.file_path)
+    if config.file_path.endswith(".md"):
+        return load_md(config.file_path)
     return SimpleDirectoryReader(input_files=[config.file_path]).load_data()
 
 
 @dg.asset
 def chunks(raw_documents: list[Document]) -> list[BaseNode]:
+    table_docs = [d for d in raw_documents if d.metadata.get("content_type") == "table"]
+    other_docs = [d for d in raw_documents if d.metadata.get("content_type") != "table"]
+
     splitter = SentenceSplitter()
-    return splitter.get_nodes_from_documents(raw_documents)
+    nodes = splitter.get_nodes_from_documents(other_docs)
+    nodes += [TextNode(text=d.text, metadata=d.metadata) for d in table_docs]
+    return nodes
 
 
 @dg.asset

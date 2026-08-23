@@ -123,7 +123,11 @@ def build_graph(retriever):
             "attempt": state["retry_count"] + 1,
             "question_used": state["question"],
             "sources": [
-                {"file_name": n.metadata.get("file_name", "unknown"), "text": n.get_content()}
+                {
+                    "file_name": n.metadata.get("file_name", "unknown"),
+                    "content_type": n.metadata.get("content_type", "text"),
+                    "text": n.get_content(),
+                }
                 for n in nodes
             ],
         }
@@ -179,7 +183,11 @@ def build_graph(retriever):
 
         generate_logger.info("answer generated")
         sources = [
-            {"file_name": node.metadata.get("file_name", "unknown"), "text": node.get_content()}
+            {
+                "file_name": node.metadata.get("file_name", "unknown"),
+                "content_type": node.metadata.get("content_type", "text"),
+                "text": node.get_content(),
+            }
             for node in state["nodes"]
         ]
         return {"answer": answer, "sources": sources}
@@ -188,7 +196,11 @@ def build_graph(retriever):
     def insufficient_context(state: RAGState) -> dict:
         insufficient_logger.info("returning insufficient-context response")
         sources = [
-            {"file_name": node.metadata.get("file_name", "unknown"), "text": node.get_content()}
+            {
+                "file_name": node.metadata.get("file_name", "unknown"),
+                "content_type": node.metadata.get("content_type", "text"),
+                "text": node.get_content(),
+            }
             for node in state["nodes"]
         ]
         return {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": sources}
