@@ -11,8 +11,8 @@ from qdrant_client import QdrantClient
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import QDRANT_URL, COLLECTION_NAME, EMBED_MODEL_NAME
-from pdf_loader import load_pdf
-from md_loader import load_md
+from ingestion.pdf_loader import load_pdf
+from ingestion.md_loader import load_md
 
 
 def ingest(file_path: str) -> None:

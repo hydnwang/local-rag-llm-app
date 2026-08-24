@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import streamlit as st
 
@@ -16,22 +18,71 @@ def render_retrieval_history(history):
                 st.write(f"{i}. [{source['file_name']} · {source['content_type']}] {source['text'][:200]}...")
 
 
+NODE_STATUS = {
+    "retrieve": "Retrieving...",
+    "assess": "Assessing context...",
+    "reformulate": "Reformulating question...",
+    "generate": "Generating answer...",
+    "insufficient_context": "Finalizing response...",
+}
+
+
+def stream_query(question: str, status_placeholder, result: dict):
+    """POSTs to /query (SSE) and yields answer text chunks as they arrive,
+    updating status_placeholder with step progress. Writes the final 'done'
+    event payload into the `result` dict passed in (mutated in place), since
+    st.write_stream only consumes yielded values and discards a generator's
+    return value."""
+    with httpx.stream(
+        "POST", f"{API_URL}/query", json={"question": question}, timeout=120.0
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line[len("data: "):])
+            if event["type"] == "node":
+                status_placeholder.caption(NODE_STATUS.get(event["node"], event["node"]))
+            elif event["type"] == "token":
+                yield event["text"]
+            elif event["type"] == "done":
+                result.update(event)
+
+
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
+if "uploads" not in st.session_state:
+    st.session_state.uploads = []
 
 with st.sidebar:
-    st.header("Upload a document")
-    uploaded_file = st.file_uploader(
-        "Choose a .txt, .pdf, or .md file", type=["txt", "pdf", "md"], key=st.session_state.uploader_key
+    st.header("Upload documents")
+    uploaded_files = st.file_uploader(
+        "Choose .txt, .pdf, or .md files",
+        type=["txt", "pdf", "md"],
+        accept_multiple_files=True,
+        key=st.session_state.uploader_key,
     )
-    if uploaded_file is not None and st.button("Ingest"):
-        with st.spinner("Ingesting..."):
+    if uploaded_files and st.button("Ingest"):
+        status = st.empty()
+        total = len(uploaded_files)
+        for i, uploaded_file in enumerate(uploaded_files, start=1):
+            status.info(f"Ingesting file {i} of {total}: {uploaded_file.name}")
             files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
             response = httpx.post(f"{API_URL}/ingest", files=files, timeout=120.0)
-            response.raise_for_status()
-        st.success(f"Ingested: {uploaded_file.name}")
+            st.session_state.uploads.append(
+                {"name": uploaded_file.name, "ok": response.status_code == 200}
+            )
+        status.empty()
         st.session_state.uploader_key += 1
         st.rerun()
+
+    if st.session_state.uploads:
+        st.subheader("Upload history")
+        for upload in st.session_state.uploads:
+            if upload["ok"]:
+                st.success(upload["name"])
+            else:
+                st.error(upload["name"])
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -56,29 +107,20 @@ if question := st.chat_input("Ask a question about your documents"):
         st.write(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = httpx.post(
-                f"{API_URL}/query", json={"question": question}, timeout=120.0
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        st.write(data["answer"])
-        st.caption(f"Path: {data['path_taken']} · Retries: {data['retry_count']}")
-        st.caption(f"Assess reasoning: {data['assess_reasoning']}")
-        render_retrieval_history(data["retrieval_history"])
-        for i, source in enumerate(data["sources"], start=1):
-            with st.expander(f"Source {i}: {source['file_name']} · {source['content_type']} ▸"):
-                st.write(source["text"])
+        status = st.empty()
+        result = {}
+        answer = st.write_stream(stream_query(question, status, result))
+        status.empty()
 
     st.session_state.messages.append(
         {
             "role": "assistant",
-            "content": data["answer"],
-            "sources": data["sources"],
-            "path_taken": data["path_taken"],
-            "assess_reasoning": data["assess_reasoning"],
-            "retry_count": data["retry_count"],
-            "retrieval_history": data["retrieval_history"],
+            "content": answer,
+            "sources": result["sources"],
+            "path_taken": result["path_taken"],
+            "assess_reasoning": result["assess_reasoning"],
+            "retry_count": result["retry_count"],
+            "retrieval_history": result["retrieval_history"],
         }
     )
+    st.rerun()

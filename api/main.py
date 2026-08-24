@@ -1,3 +1,4 @@
+import json
 import logging
 import shutil
 import sys
@@ -6,8 +7,9 @@ import time
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from llama_index.core import VectorStoreIndex
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -24,7 +26,7 @@ from config import (
     QDRANT_URL,
     TOP_K,
 )
-from api.graph import build_graph
+from api.graph import NODE_DURATION_SECONDS, build_generate_prompt, build_graph, sources_from_nodes, stream_ollama
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -55,60 +57,71 @@ class QueryRequest(BaseModel):
     question: str
 
 
-class Source(BaseModel):
-    file_name: str
-    content_type: str
-    text: str
-
-
-class RetrievalAttempt(BaseModel):
-    attempt: int
-    question_used: str
-    sources: list[Source]
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    sources: list[Source]
-    path_taken: str
-    assess_reasoning: str
-    retry_count: int
-    retrieval_history: list[RetrievalAttempt] = []
-
-
 @app.get("/metrics")
 async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest) -> QueryResponse:
+@app.post("/query")
+async def query(request: QueryRequest) -> StreamingResponse:
     logger.info(f"POST /query | question={request.question}")
-    start = time.monotonic()
-    result = rag_graph.invoke(
-        {
+
+    async def event_stream():
+        start = time.monotonic()
+        initial_input = {
             "question": request.question,
             "original_question": request.question,
             "retry_count": 0,
         }
-    )
-    elapsed = time.monotonic() - start
-    logger.info(
-        f"POST /query | status=200 | path={result['assessment']} | "
-        f"retries={result['retry_count']} | elapsed={elapsed:.1f}s"
-    )
-    return QueryResponse(
-        answer=result["answer"],
-        sources=[Source(**s) for s in result["sources"]],
-        path_taken=result["assessment"],
-        assess_reasoning=result["assess_reasoning"],
-        retry_count=result["retry_count"],
-        retrieval_history=(
-            [RetrievalAttempt(**a) for a in result["retrieval_history"]]
-            if result["retry_count"] > 0
-            else []
-        ),
-    )
+        final_state: dict = dict(initial_input)
+
+        async for update in rag_graph.astream(initial_input, stream_mode="updates"):
+            node_name, node_output = next(iter(update.items()))
+            yield f"data: {json.dumps({'type': 'node', 'node': node_name})}\n\n"
+            if "retrieval_history" in node_output:
+                final_state["retrieval_history"] = final_state.get("retrieval_history", []) + node_output["retrieval_history"]
+                node_output = {k: v for k, v in node_output.items() if k != "retrieval_history"}
+            final_state.update(node_output)
+
+        assessment = final_state.get("assessment", "insufficient")
+
+        if assessment.startswith("pass"):
+            yield f"data: {json.dumps({'type': 'node', 'node': 'generate'})}\n\n"
+            gen_start = time.monotonic()
+            prompt = build_generate_prompt(final_state)
+            answer_parts = []
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async for chunk in stream_ollama(client, prompt):
+                    answer_parts.append(chunk)
+                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+            NODE_DURATION_SECONDS.labels(node="generate").observe(time.monotonic() - gen_start)
+            answer = "".join(answer_parts)
+            sources = sources_from_nodes(final_state["nodes"])
+        else:
+            answer = final_state["answer"]
+            sources = final_state["sources"]
+            yield f"data: {json.dumps({'type': 'token', 'text': answer})}\n\n"
+
+        elapsed = time.monotonic() - start
+        logger.info(
+            f"POST /query | status=200 | path={assessment} | "
+            f"retries={final_state['retry_count']} | elapsed={elapsed:.1f}s"
+        )
+        yield "data: " + json.dumps(
+            {
+                "type": "done",
+                "answer": answer,
+                "sources": sources,
+                "path_taken": assessment,
+                "assess_reasoning": final_state.get("assess_reasoning", ""),
+                "retry_count": final_state["retry_count"],
+                "retrieval_history": (
+                    final_state["retrieval_history"] if final_state["retry_count"] > 0 else []
+                ),
+            }
+        ) + "\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/ingest")
@@ -146,7 +159,10 @@ async def ingest_file(file: UploadFile) -> dict:
 
     if status != DagsterRunStatus.SUCCESS:
         logger.info(f"POST /ingest | status=500 | file={file.filename} | elapsed={elapsed:.1f}s")
-        return {"status": "error", "file_name": file.filename, "run_id": run_id}
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "file_name": file.filename, "run_id": run_id},
+        )
 
     logger.info(f"POST /ingest | status=200 | file={file.filename} | elapsed={elapsed:.1f}s")
     return {"status": "ok", "file_name": file.filename, "run_id": run_id}

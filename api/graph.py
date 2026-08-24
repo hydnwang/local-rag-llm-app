@@ -91,6 +91,22 @@ def _call_ollama(client: httpx.Client, prompt: str) -> str:
     return response.json()["response"]
 
 
+async def stream_ollama(client: httpx.AsyncClient, prompt: str):
+    """Yields answer text chunks as they arrive from Ollama's streaming API."""
+    async with client.stream(
+        "POST",
+        f"{OLLAMA_URL}/api/generate",
+        json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": True},
+    ) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+            if chunk.get("response"):
+                yield chunk["response"]
+
+
 def _parse_judge_output(raw: str) -> dict:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
@@ -105,14 +121,42 @@ def _parse_judge_output(raw: str) -> dict:
         return {"verdict": "no", "reasoning": f"Could not parse judge output: {raw[:200]}"}
 
 
+def build_generate_prompt(state: RAGState) -> str:
+    context = "\n\n".join(node.get_content() for node in state["nodes"])
+    return (
+        f"Answer the question using only the context below. "
+        f"If the context doesn't contain the answer, say so. "
+        f"If the context contains numbers or facts that are related to the question but "
+        f"do not directly answer it, point that out explicitly rather than substituting "
+        f"them as if they were the answer.\n\n"
+        f"Context:\n{context}\n\nQuestion: {state['original_question']}"
+    )
+
+
+def sources_from_nodes(nodes: list) -> list[dict]:
+    return [
+        {
+            "file_name": node.metadata.get("file_name", "unknown"),
+            "content_type": node.metadata.get("content_type", "text"),
+            "text": node.get_content(),
+        }
+        for node in nodes
+    ]
+
+
 def build_graph(retriever):
     """retriever: a LlamaIndex retriever (e.g. index.as_retriever(...)), injected
-    from main.py so this module doesn't own vector store / embedding setup."""
+    from main.py so this module doesn't own vector store / embedding setup.
+
+    The graph covers retrieve -> assess -> reformulate looping and the
+    insufficient_context terminal path. The "generate" step is NOT a graph node:
+    it needs to stream tokens to the caller, which LangGraph nodes (which return
+    a complete state update) aren't a fit for. main.py calls stream_ollama()
+    directly with build_generate_prompt() once the graph signals a "pass" verdict."""
 
     retrieve_logger = logging.getLogger("retrieve")
     assess_logger = logging.getLogger("assess")
     reformulate_logger = logging.getLogger("reformulate")
-    generate_logger = logging.getLogger("generate")
     insufficient_logger = logging.getLogger("insufficient_context")
 
     @_timed_node("retrieve")
@@ -153,7 +197,9 @@ def build_graph(retriever):
         return {"assessment": "insufficient", "assess_reasoning": judged["reasoning"]}
 
     def route_after_assess(state: RAGState) -> str:
-        return "generate" if state["assessment"].startswith("pass") else state["assessment"]
+        if state["assessment"].startswith("pass"):
+            return "generate"
+        return state["assessment"]
 
     @_timed_node("reformulate")
     def reformulate(state: RAGState) -> dict:
@@ -167,49 +213,15 @@ def build_graph(retriever):
         reformulate_logger.info(f"rewritten question={new_question}")
         return {"question": new_question, "retry_count": state["retry_count"] + 1}
 
-    @_timed_node("generate")
-    def generate(state: RAGState) -> dict:
-        context = "\n\n".join(node.get_content() for node in state["nodes"])
-        prompt = (
-            f"Answer the question using only the context below. "
-            f"If the context doesn't contain the answer, say so. "
-            f"If the context contains numbers or facts that are related to the question but "
-            f"do not directly answer it, point that out explicitly rather than substituting "
-            f"them as if they were the answer.\n\n"
-            f"Context:\n{context}\n\nQuestion: {state['original_question']}"
-        )
-        with httpx.Client(timeout=120.0) as client:
-            answer = _call_ollama(client, prompt)
-
-        generate_logger.info("answer generated")
-        sources = [
-            {
-                "file_name": node.metadata.get("file_name", "unknown"),
-                "content_type": node.metadata.get("content_type", "text"),
-                "text": node.get_content(),
-            }
-            for node in state["nodes"]
-        ]
-        return {"answer": answer, "sources": sources}
-
     @_timed_node("insufficient_context")
     def insufficient_context(state: RAGState) -> dict:
         insufficient_logger.info("returning insufficient-context response")
-        sources = [
-            {
-                "file_name": node.metadata.get("file_name", "unknown"),
-                "content_type": node.metadata.get("content_type", "text"),
-                "text": node.get_content(),
-            }
-            for node in state["nodes"]
-        ]
-        return {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": sources}
+        return {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": sources_from_nodes(state["nodes"])}
 
     graph = StateGraph(RAGState)
     graph.add_node("retrieve", retrieve)
     graph.add_node("assess", assess)
     graph.add_node("reformulate", reformulate)
-    graph.add_node("generate", generate)
     graph.add_node("insufficient_context", insufficient_context)
 
     graph.set_entry_point("retrieve")
@@ -217,10 +229,9 @@ def build_graph(retriever):
     graph.add_conditional_edges(
         "assess",
         route_after_assess,
-        {"generate": "generate", "retry": "reformulate", "insufficient": "insufficient_context"},
+        {"generate": END, "retry": "reformulate", "insufficient": "insufficient_context"},
     )
     graph.add_edge("reformulate", "retrieve")
-    graph.add_edge("generate", END)
     graph.add_edge("insufficient_context", END)
 
     return graph.compile()
