@@ -29,7 +29,7 @@ from qdrant_client import QdrantClient
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import COLLECTION_NAME, EMBED_MODEL_NAME, OLLAMA_MODEL, OLLAMA_URL, QDRANT_URL, TOP_K
-from api.graph import build_graph
+from api.graph import _call_ollama, build_generate_prompt, build_graph, parse_generate_sources, sources_from_nodes
 
 INPUT_PATH = Path(__file__).resolve().parent / "testset.json"
 
@@ -146,14 +146,27 @@ def main() -> None:
             graph_result = rag_graph.invoke(
                 {"question": question, "original_question": question, "retry_count": 0}
             )
-            elapsed_seconds = round(time.monotonic() - start, 1)
-            print(f"    -> {graph_result['assessment']} in {elapsed_seconds}s")
+            assessment = graph_result["assessment"]
 
-            final_sources = graph_result["sources"]
+            if assessment.startswith("pass"):
+                # Graph ends at the assess routing decision — generate is not a graph
+                # node (see build_graph's docstring), so call it directly here the same
+                # way main.py does.
+                prompt = build_generate_prompt(graph_result)
+                raw_answer = _call_ollama(client, prompt)
+                answer, used_indices = parse_generate_sources(raw_answer, len(graph_result["nodes"]))
+                final_sources = sources_from_nodes([graph_result["nodes"][i] for i in used_indices])
+            else:
+                answer = graph_result["answer"]
+                final_sources = graph_result["sources"]
+
+            elapsed_seconds = round(time.monotonic() - start, 1)
+            print(f"    -> {assessment} in {elapsed_seconds}s")
+
             context = "\n\n".join(s["text"] for s in final_sources)
 
             start_metrics = time.monotonic()
-            metrics = score_metrics(client, question, reference, graph_result["answer"], context)
+            metrics = score_metrics(client, question, reference, answer, context)
             elapsed_seconds_metrics = round(time.monotonic() - start_metrics, 1)
             print(f"    -> metrics scored in {elapsed_seconds_metrics}s")
             print(f"    -> total time used: {round(time.monotonic() - start, 1)}s")
@@ -162,8 +175,8 @@ def main() -> None:
                 {
                     "user_input": question,
                     "reference": reference,
-                    "response": graph_result["answer"],
-                    "path_taken": graph_result["assessment"],
+                    "response": answer,
+                    "path_taken": assessment,
                     "retry_count": graph_result["retry_count"],
                     "elapsed_seconds": elapsed_seconds,
                     "assess_reasoning": graph_result["assess_reasoning"],

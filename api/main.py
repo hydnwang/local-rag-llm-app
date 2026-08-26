@@ -26,7 +26,14 @@ from config import (
     QDRANT_URL,
     TOP_K,
 )
-from api.graph import NODE_DURATION_SECONDS, build_generate_prompt, build_graph, sources_from_nodes, stream_ollama
+from api.graph import (
+    NODE_DURATION_SECONDS,
+    build_generate_prompt,
+    build_graph,
+    parse_generate_sources,
+    sources_from_nodes,
+    stream_ollama,
+)
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -90,13 +97,28 @@ async def query(request: QueryRequest) -> StreamingResponse:
             gen_start = time.monotonic()
             prompt = build_generate_prompt(final_state)
             answer_parts = []
+            # Hold back a trailing window so the "SOURCES: [...]" tag generate appends
+            # never reaches the live stream — only text older than the window is ever
+            # flushed as a token event, so the tag (which only appears at the very end)
+            # is never sent, no un-sending/rerun-correction needed.
+            TRAIL_WINDOW = 32
+            pending = ""
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async for chunk in stream_ollama(client, prompt):
                     answer_parts.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                    pending += chunk
+                    if len(pending) > TRAIL_WINDOW:
+                        flush, pending = pending[:-TRAIL_WINDOW], pending[-TRAIL_WINDOW:]
+                        yield f"data: {json.dumps({'type': 'token', 'text': flush})}\n\n"
             NODE_DURATION_SECONDS.labels(node="generate").observe(time.monotonic() - gen_start)
-            answer = "".join(answer_parts)
-            sources = sources_from_nodes(final_state["nodes"])
+            raw_answer = "".join(answer_parts)
+            answer, used_indices = parse_generate_sources(raw_answer, len(final_state["nodes"]))
+            # Flush whatever of the held-back window is actually answer text (i.e.
+            # everything except the parsed-out SOURCES tag, if present).
+            remaining_answer_tail = answer[len(raw_answer) - len(pending):]
+            if remaining_answer_tail:
+                yield f"data: {json.dumps({'type': 'token', 'text': remaining_answer_tail})}\n\n"
+            sources = sources_from_nodes([final_state["nodes"][i] for i in used_indices])
         else:
             answer = final_state["answer"]
             sources = final_state["sources"]

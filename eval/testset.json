@@ -78,5 +78,45 @@
   {
     "user_input": "What was House of the Dragon's total box office revenue during its IMAX theatrical release?",
     "reference": "The article does not mention an IMAX theatrical release for House of the Dragon. (This detail appears in the Game of Thrones article instead, referring to season 4's IMAX release, not House of the Dragon.)"
+  },
+  {
+    "user_input": "According to the taxonomy, what is the core limitation of a Level 0 agent?",
+    "reference": "A Level 0 agent (the Core Reasoning System) operates in isolation with no tools, memory, or interaction with the live environment, so it is functionally 'blind' to any event or fact outside its training data \u2014 e.g. it cannot report last night's Yankees score."
+  },
+  {
+    "user_input": "What key skill emerges at Level 2 that distinguishes it from Level 1?",
+    "reference": "Level 2 introduces context engineering: the agent's ability to actively select, package, and manage the most relevant information for each step of a multi-part plan, rather than just executing simple single-tool tasks like Level 1."
+  },
+  {
+    "user_input": "Using the Solaris headphones example, explain how a Level 3 system differs from a Level 4 system handling the same launch.",
+    "reference": "At Level 3, the Project Manager agent delegates fixed sub-tasks to existing specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) \u2014 a team of specialists with divided labor. At Level 4, if a needed capability doesn't exist (e.g. social media sentiment tracking), the system autonomously creates a new tool or agent (a SentimentAnalysisAgent) on the fly rather than being limited to its existing team."
+  },
+  {
+    "user_input": "What programming languages or frameworks does the taxonomy recommend for implementing a Level 1 agent's tool integrations?",
+    "reference": "The document does not mention specific programming languages or frameworks for implementing tool integrations; it describes the Level 1 concept generally (e.g. a Google Search API or a financial API) without prescribing implementation technology."
+  },
+  {
+    "user_input": "What key components are associated with an event-driven system pattern?",
+    "reference": "An event-driven system pattern's key components are a queue or Kafka, async workers, and idempotency."
+  },
+  {
+    "user_input": "What algorithm does the Python code block in the sample file implement?",
+    "reference": "The code implements the Quickselect algorithm (via findKthSmallest), which finds the k-th smallest element in an unsorted list using a randomized partition/pivot approach."
+  },
+  {
+    "user_input": "Compare the key signals and reasons for choosing a read-heavy system versus a write-heavy system.",
+    "reference": "A read-heavy system is signaled by a critical cache hit ratio and is chosen to reduce DB load and improve latency (e.g. a news feed). A write-heavy system is signaled by append-only writes and is chosen because sequential writes scale better (e.g. a logging system)."
+  },
+  {
+    "user_input": "What time complexity does the sample file state for the findKthSmallest function?",
+    "reference": "The sample file does not state a time complexity for findKthSmallest; no Big-O analysis or complexity discussion is included in the code block or surrounding text."
+  },
+  {
+    "user_input": "Compare how the markdown file's 'Coordination / Contention' pattern and the PDF's Level 3 multi-agent system both address the challenge of multiple actors operating concurrently.",
+    "reference": "The markdown file's Coordination/Contention pattern addresses concurrent access to shared resources using locks, transactions, queues, and rate limiting to ensure correctness (e.g. ticket booking). The PDF's Level 3 system addresses multiple concurrent actors differently \u2014 not through concurrency-control mechanisms, but through delegation: a Project Manager agent divides work among specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) so each operates on a distinct sub-task rather than contending for the same resource."
+  },
+  {
+    "user_input": "Which of the two newly added documents \u2014 the markdown sample or the PDF taxonomy \u2014 discusses recommendation systems, and what does it say?",
+    "reference": "The markdown sample file discusses recommendation systems, describing them as personalization-focused (e.g. ads/feed ranking), signaled by ML + ranking, built from a feature store, cache, and ranking service, chosen to precompute results for fast serving. The PDF taxonomy does not mention recommendation systems."
   }
 ]
