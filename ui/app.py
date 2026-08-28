@@ -1,9 +1,10 @@
 import json
+import os
 
 import httpx
 import streamlit as st
 
-API_URL = "http://localhost:8000"
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 st.title("RAG Q&A Demo")
 

@@ -29,7 +29,7 @@ from qdrant_client import QdrantClient
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import COLLECTION_NAME, EMBED_MODEL_NAME, OLLAMA_MODEL, OLLAMA_URL, QDRANT_URL, TOP_K
-from api.graph import _call_ollama, build_generate_prompt, build_graph, parse_generate_sources, sources_from_nodes
+from api.graph import _call_ollama, build_generate_prompt, build_graph, sources_from_nodes
 
 INPUT_PATH = Path(__file__).resolve().parent / "testset.json"
 
@@ -153,20 +153,30 @@ def main() -> None:
                 # node (see build_graph's docstring), so call it directly here the same
                 # way main.py does.
                 prompt = build_generate_prompt(graph_result)
-                raw_answer = _call_ollama(client, prompt)
-                answer, used_indices = parse_generate_sources(raw_answer, len(graph_result["nodes"]))
-                final_sources = sources_from_nodes([graph_result["nodes"][i] for i in used_indices])
+                answer = _call_ollama(client, prompt)
+                # Sources shown are the top-3 by retrieval similarity score, which
+                # assess already validated as sufficient — not generate's self-report,
+                # which proved unreliable (~25% of citations pointed at chunks that
+                # didn't support the answer).
+                final_sources = sources_from_nodes(graph_result["nodes"][:3])
+                # Scoring context uses all 8 nodes, not just the displayed top-3 — this
+                # matches what generate actually saw when producing the answer. Scoring
+                # against only the top-3 was producing false faithfulness/precision/
+                # recall failures whenever generate correctly drew a fact from a chunk
+                # outside the top-3 (confirmed via full-text inspection on several
+                # questions — the answer was genuinely grounded, just in a chunk the
+                # judge never got to see).
+                scoring_context = "\n\n".join(n.get_content() for n in graph_result["nodes"])
             else:
                 answer = graph_result["answer"]
                 final_sources = graph_result["sources"]
+                scoring_context = "\n\n".join(s["text"] for s in final_sources)
 
             elapsed_seconds = round(time.monotonic() - start, 1)
             print(f"    -> {assessment} in {elapsed_seconds}s")
 
-            context = "\n\n".join(s["text"] for s in final_sources)
-
             start_metrics = time.monotonic()
-            metrics = score_metrics(client, question, reference, answer, context)
+            metrics = score_metrics(client, question, reference, answer, scoring_context)
             elapsed_seconds_metrics = round(time.monotonic() - start_metrics, 1)
             print(f"    -> metrics scored in {elapsed_seconds_metrics}s")
             print(f"    -> total time used: {round(time.monotonic() - start, 1)}s")

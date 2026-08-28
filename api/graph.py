@@ -122,70 +122,15 @@ def _parse_judge_output(raw: str) -> dict:
 
 
 def build_generate_prompt(state: RAGState) -> str:
-    nodes = state["nodes"]
-    context = "\n\n".join(f"[{i}] {node.get_content()}" for i, node in enumerate(nodes))
+    context = "\n\n".join(node.get_content() for node in state["nodes"])
     return (
-        f"Answer the question using only the context below. Each chunk is labeled with an "
-        f"index like [0], [1], etc. — these labels are for your own bookkeeping only. Do "
-        f"NOT write these index numbers anywhere inside your answer text; write the answer "
-        f"as normal prose with no bracketed numbers in it at all.\n\n"
+        f"Answer the question using only the context below. "
         f"If the context doesn't contain the answer, say so. "
         f"If the context contains numbers or facts that are related to the question but "
         f"do not directly answer it, point that out explicitly rather than substituting "
         f"them as if they were the answer.\n\n"
-        f"Context:\n{context}\n\nQuestion: {state['original_question']}\n\n"
-        f"After your answer, on a new line, list the indices of the chunks you actually "
-        f"used to answer — not every chunk you read, only the ones your answer is based "
-        f"on. Use this exact format, with no other text after it, and no other line "
-        f"breaks or bracketed numbers anywhere earlier in your response:\n"
-        f"SOURCES: [<comma-separated indices>]\n\n"
-        f"Example of a correctly formatted full response, given a question about a "
-        f"character's actor and chunks [0] and [2] containing the relevant casting info:\n"
-        f"Jane Doe plays the character in the show.\n"
-        f"SOURCES: [0, 2]\n\n"
-        f"Now answer the actual question above, following that exact format."
+        f"Context:\n{context}\n\nQuestion: {state['original_question']}"
     )
-
-
-def parse_generate_sources(raw_answer: str, num_nodes: int) -> tuple[str, list[int]]:
-    """Splits generate's raw output into (answer_text, used_indices). If the trailing
-    SOURCES tag is missing or malformed, falls back to all node indices (fail-open —
-    same as showing everything, the pre-filtering-feature default).
-
-    Tolerant of two observed model formats: "SOURCES: [0, 2]" (one bracket, comma-
-    separated) and "SOURCES: [0], [2]" (multiple separate brackets) — the model doesn't
-    reliably use the single format we ask for, so this accepts both rather than treating
-    the second as malformed.
-
-    Also strips any stray bracketed integers (e.g. "[1]") from inside the answer text
-    itself — a safety net for cases where the model cites a chunk index inline instead
-    of only in the trailing tag, which the prompt instructs against but isn't fully
-    reliable in practice."""
-    match = re.search(r"\nSOURCES:\s*((?:\[[^\]]*\]\s*,?\s*)+)\s*$", raw_answer)
-    if not match:
-        return _strip_inline_indices(raw_answer), list(range(num_nodes))
-
-    answer_text = raw_answer[: match.start()].rstrip()
-    answer_text = _strip_inline_indices(answer_text)
-
-    raw_numbers = re.findall(r"\d+", match.group(1))
-    try:
-        indices = [int(n) for n in raw_numbers]
-    except ValueError:
-        return _strip_inline_indices(raw_answer), list(range(num_nodes))
-
-    indices = [i for i in indices if 0 <= i < num_nodes]
-    if not indices:
-        return answer_text, list(range(num_nodes))
-    return answer_text, indices
-
-
-def _strip_inline_indices(text: str) -> str:
-    """Removes stray bracketed integers like '[1]' or '[2, 3]' from inside answer text.
-    Safety net for when generate cites a chunk index inline instead of only in the
-    trailing SOURCES tag — collapses any resulting extra whitespace left behind."""
-    stripped = re.sub(r"\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]\s*", " ", text)
-    return re.sub(r"[ \t]{2,}", " ", stripped).strip()
 
 
 def sources_from_nodes(nodes: list) -> list[dict]:
@@ -227,11 +172,13 @@ def build_graph(retriever):
                     "file_name": n.metadata.get("file_name", "unknown"),
                     "content_type": n.metadata.get("content_type", "text"),
                     "text": n.get_content(),
+                    "score": n.score,
                 }
                 for n in nodes
             ],
         }
         return {"nodes": nodes, "retrieval_history": [attempt_record]}
+
 
     @_timed_node("assess")
     def assess(state: RAGState) -> dict:

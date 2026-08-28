@@ -7,14 +7,102 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  dagster:
+    build:
+      context: .
+      dockerfile: Dockerfile.dagster
+    ports:
+      - "3000:3000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - DAGSTER_HOME=/app/.dagster_home
+    volumes:
+      - ./.dagster_home:/app/.dagster_home
+      - ./files:/app/files
+    depends_on:
+      - qdrant
+    restart: on-failure
+    healthcheck:
+      # Dagster's gRPC code-location connection has been observed to go stale
+      # after long idle periods (UserWarning: "Error loading repository
+      # location"). A periodic lightweight query keeps the connection warm
+      # and exercised, and gives Compose a failure signal to act on via
+      # restart: on-failure if it does go stale.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/server_info', timeout=5)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./ingestion
+          target: /app/ingestion
+        - action: sync+restart
+          path: ./config.py
+          target: /app/config.py
+        - action: rebuild
+          path: ./pyproject.toml
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      # Ollama stays native on the host (needs macOS Metal GPU access, which
+      # Docker on Mac can't pass through) — reached via Docker's
+      # host-gateway alias rather than a Compose service name. Dagster is
+      # now containerized alongside api, so it's reached by service name.
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - DAGSTER_HOST=dagster
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+      - ./files:/app/files
+    depends_on:
+      - qdrant
+      - dagster
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./api
+          target: /app/api
+        - action: sync+restart
+          path: ./config.py
+          target: /app/config.py
+        - action: rebuild
+          path: ./pyproject.toml
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./ui
+          target: /app/ui
+        - action: rebuild
+          path: ./pyproject.toml
+
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
 
   grafana:
     image: grafana/grafana:latest
@@ -26,3 +114,4 @@ services:
 volumes:
   qdrant_data:
   grafana_data:
+  prometheus_data:

@@ -81,7 +81,7 @@
   },
   {
     "user_input": "According to the taxonomy, what is the core limitation of a Level 0 agent?",
-    "reference": "A Level 0 agent (the Core Reasoning System) operates in isolation with no tools, memory, or interaction with the live environment, so it is functionally 'blind' to any event or fact outside its training data \u2014 e.g. it cannot report last night's Yankees score."
+    "reference": "A Level 0 agent (the Core Reasoning System) operates in isolation with no tools, memory, or interaction with the live environment, so it is functionally 'blind' to any event or fact outside its training data - e.g. it cannot report last night's Yankees score."
   },
   {
     "user_input": "What key skill emerges at Level 2 that distinguishes it from Level 1?",
@@ -89,7 +89,7 @@
   },
   {
     "user_input": "Using the Solaris headphones example, explain how a Level 3 system differs from a Level 4 system handling the same launch.",
-    "reference": "At Level 3, the Project Manager agent delegates fixed sub-tasks to existing specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) \u2014 a team of specialists with divided labor. At Level 4, if a needed capability doesn't exist (e.g. social media sentiment tracking), the system autonomously creates a new tool or agent (a SentimentAnalysisAgent) on the fly rather than being limited to its existing team."
+    "reference": "At Level 3, the Project Manager agent delegates fixed sub-tasks to existing specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) - a team of specialists with divided labor. At Level 4, if a needed capability doesn't exist (e.g. social media sentiment tracking), the system autonomously creates a new tool or agent (a SentimentAnalysisAgent) on the fly rather than being limited to its existing team."
   },
   {
     "user_input": "What programming languages or frameworks does the taxonomy recommend for implementing a Level 1 agent's tool integrations?",
@@ -113,10 +113,10 @@
   },
   {
     "user_input": "Compare how the markdown file's 'Coordination / Contention' pattern and the PDF's Level 3 multi-agent system both address the challenge of multiple actors operating concurrently.",
-    "reference": "The markdown file's Coordination/Contention pattern addresses concurrent access to shared resources using locks, transactions, queues, and rate limiting to ensure correctness (e.g. ticket booking). The PDF's Level 3 system addresses multiple concurrent actors differently \u2014 not through concurrency-control mechanisms, but through delegation: a Project Manager agent divides work among specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) so each operates on a distinct sub-task rather than contending for the same resource."
+    "reference": "The markdown file's Coordination/Contention pattern addresses concurrent access to shared resources using locks, transactions, queues, and rate limiting to ensure correctness (e.g. ticket booking). The PDF's Level 3 system addresses multiple concurrent actors differently - not through concurrency-control mechanisms, but through delegation: a Project Manager agent divides work among specialized agents (MarketResearchAgent, MarketingAgent, WebDevAgent) so each operates on a distinct sub-task rather than contending for the same resource."
   },
   {
-    "user_input": "Which of the two newly added documents \u2014 the markdown sample or the PDF taxonomy \u2014 discusses recommendation systems, and what does it say?",
+    "user_input": "Which of the two newly added documents - the markdown sample or the PDF taxonomy - discusses recommendation systems, and what does it say?",
     "reference": "The markdown sample file discusses recommendation systems, describing them as personalization-focused (e.g. ads/feed ranking), signaled by ML + ranking, built from a feature store, cache, and ranking service, chosen to precompute results for fast serving. The PDF taxonomy does not mention recommendation systems."
   }
 ]

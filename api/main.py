@@ -2,7 +2,6 @@ import json
 import logging
 import shutil
 import sys
-import tempfile
 import time
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -26,17 +25,13 @@ from config import (
     QDRANT_URL,
     TOP_K,
 )
-from api.graph import (
-    NODE_DURATION_SECONDS,
-    build_generate_prompt,
-    build_graph,
-    parse_generate_sources,
-    sources_from_nodes,
-    stream_ollama,
-)
+from api.graph import NODE_DURATION_SECONDS, build_generate_prompt, build_graph, sources_from_nodes, stream_ollama
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+
+INGEST_DIR = Path(__file__).resolve().parent.parent / "files" / "ingest"
+INGEST_DIR.mkdir(parents=True, exist_ok=True)
 
 log_formatter = logging.Formatter("[%(levelname)s][%(name)s] %(asctime)s | %(message)s", "%Y-%m-%d %H:%M:%S")
 
@@ -62,6 +57,22 @@ rag_graph = build_graph(retriever)
 
 class QueryRequest(BaseModel):
     question: str
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{QDRANT_URL}/collections")
+        qdrant_ok = resp.status_code == 200
+    except httpx.HTTPError:
+        qdrant_ok = False
+
+    status = "ok" if qdrant_ok else "degraded"
+    return JSONResponse(
+        status_code=200 if qdrant_ok else 503,
+        content={"status": status, "qdrant": "ok" if qdrant_ok else "unreachable"},
+    )
 
 
 @app.get("/metrics")
@@ -97,28 +108,17 @@ async def query(request: QueryRequest) -> StreamingResponse:
             gen_start = time.monotonic()
             prompt = build_generate_prompt(final_state)
             answer_parts = []
-            # Hold back a trailing window so the "SOURCES: [...]" tag generate appends
-            # never reaches the live stream — only text older than the window is ever
-            # flushed as a token event, so the tag (which only appears at the very end)
-            # is never sent, no un-sending/rerun-correction needed.
-            TRAIL_WINDOW = 32
-            pending = ""
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async for chunk in stream_ollama(client, prompt):
                     answer_parts.append(chunk)
-                    pending += chunk
-                    if len(pending) > TRAIL_WINDOW:
-                        flush, pending = pending[:-TRAIL_WINDOW], pending[-TRAIL_WINDOW:]
-                        yield f"data: {json.dumps({'type': 'token', 'text': flush})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
             NODE_DURATION_SECONDS.labels(node="generate").observe(time.monotonic() - gen_start)
-            raw_answer = "".join(answer_parts)
-            answer, used_indices = parse_generate_sources(raw_answer, len(final_state["nodes"]))
-            # Flush whatever of the held-back window is actually answer text (i.e.
-            # everything except the parsed-out SOURCES tag, if present).
-            remaining_answer_tail = answer[len(raw_answer) - len(pending):]
-            if remaining_answer_tail:
-                yield f"data: {json.dumps({'type': 'token', 'text': remaining_answer_tail})}\n\n"
-            sources = sources_from_nodes([final_state["nodes"][i] for i in used_indices])
+            answer = "".join(answer_parts)
+            # Sources shown are the top-3 by retrieval similarity score, which assess
+            # already validated as sufficient to answer the question — not generate's
+            # self-report, which proved unreliable (~25% of citations pointed at
+            # chunks that didn't support the answer).
+            sources = sources_from_nodes(final_state["nodes"][:3])
         else:
             answer = final_state["answer"]
             sources = final_state["sources"]
@@ -149,6 +149,7 @@ async def query(request: QueryRequest) -> StreamingResponse:
 @app.post("/ingest")
 async def ingest_file(file: UploadFile) -> dict:
     import asyncio
+    import uuid
 
     from dagster_graphql import DagsterGraphQLClient
     from dagster._core.storage.dagster_run import DagsterRunStatus
@@ -156,35 +157,59 @@ async def ingest_file(file: UploadFile) -> dict:
     logger.info(f"POST /ingest | file={file.filename}")
     start = time.monotonic()
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / file.filename
-        with open(tmp_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+    # Written to a durable directory, not an ephemeral temp dir — Dagster's daemon
+    # runs as a separate process and may not pick up the run immediately, so the
+    # file's lifetime can't be tied to this request's own control flow. It's only
+    # deleted below once Dagster confirms the run reached a terminal state.
+    unique_name = f"{uuid.uuid4().hex}_{file.filename}"
+    ingest_path = INGEST_DIR / unique_name
+    with open(ingest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
 
+    try:
         client = DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT)
         run_id = client.submit_job_execution(
             "ingest_job",
-            run_config={"ops": {"raw_documents": {"config": {"file_path": str(tmp_path)}}}},
+            run_config={"ops": {"raw_documents": {"config": {"file_path": str(ingest_path)}}}},
+        )
+    except Exception:
+        logger.exception(f"POST /ingest | failed to submit run | file={file.filename}")
+        ingest_path.unlink(missing_ok=True)
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "file_name": file.filename, "detail": "Failed to submit ingest job"},
         )
 
-        terminal_states = {
-            DagsterRunStatus.SUCCESS,
-            DagsterRunStatus.FAILURE,
-            DagsterRunStatus.CANCELED,
-        }
+    terminal_states = {
+        DagsterRunStatus.SUCCESS,
+        DagsterRunStatus.FAILURE,
+        DagsterRunStatus.CANCELED,
+    }
+    try:
         status = client.get_run_status(run_id)
         while status not in terminal_states:
             await asyncio.sleep(1)
             status = client.get_run_status(run_id)
-
-    elapsed = time.monotonic() - start
+    except Exception:
+        # We lost the ability to confirm the run's outcome — leave the file in
+        # place rather than guess, since Dagster may still be processing it.
+        logger.exception(f"POST /ingest | failed to poll run status | file={file.filename} | run_id={run_id}")
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "file_name": file.filename, "run_id": run_id, "detail": "Lost contact while polling run status"},
+        )
+    finally:
+        elapsed = time.monotonic() - start
 
     if status != DagsterRunStatus.SUCCESS:
-        logger.info(f"POST /ingest | status=500 | file={file.filename} | elapsed={elapsed:.1f}s")
+        logger.info(f"POST /ingest | status=500 | file={file.filename} | elapsed={elapsed:.1f}s | run_id={run_id}")
+        ingest_path.unlink(missing_ok=True)
         return JSONResponse(
             status_code=500,
             content={"status": "error", "file_name": file.filename, "run_id": run_id},
         )
+
+    ingest_path.unlink(missing_ok=True)
 
     logger.info(f"POST /ingest | status=200 | file={file.filename} | elapsed={elapsed:.1f}s")
     return {"status": "ok", "file_name": file.filename, "run_id": run_id}
