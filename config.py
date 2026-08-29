@@ -10,3 +10,5 @@ TOP_K = 8
 
 DAGSTER_HOST = os.environ.get("DAGSTER_HOST", "localhost")
 DAGSTER_PORT = 3000
+
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"

@@ -8,7 +8,7 @@ Replaces run_testset.py + score_testset.py. Uses api/graph.py directly so the
 eval measures the actual system, including retry/assess behavior.
 
 Input:  eval/testset.json
-Output: eval/eval_<YYYYMMDD>_<HHMMSS>.json
+Output: eval/report/eval_<YYYYMMDD>_<HHMMSS>.json
 
 Usage:
     uv run python eval/evaluate.py
@@ -223,8 +223,10 @@ def main() -> None:
 
     output = {"summary": summary, "results": results}
 
+    output_dir = Path(__file__).resolve().parent / "report"
+    output_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = Path(__file__).resolve().parent / f"eval_{timestamp}.json"
+    output_path = output_dir / f"eval_{timestamp}.json"
     output_path.write_text(json.dumps(output, indent=2))
     print("----- Evaluation Ends -----")
 

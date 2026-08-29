@@ -11,5 +11,5 @@ __pycache__/
 *.DS_Store
 
 files/
-eval/*.json
+eval/report/
 logs/

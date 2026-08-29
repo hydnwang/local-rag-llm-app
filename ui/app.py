@@ -1,12 +1,23 @@
 import json
 import os
+import re
 
 import httpx
 import streamlit as st
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() == "true"
 
 st.title("RAG Q&A Demo")
+
+_UUID_PREFIX = re.compile(r"^[0-9a-f]{32}_")
+
+
+def display_name(file_name: str) -> str:
+    """Strips the UUID-hex collision-prevention prefix (see main.py's /ingest)
+    for display purposes only. The prefixed name remains the real identity
+    used on disk and in Qdrant — this never touches that value."""
+    return _UUID_PREFIX.sub("", file_name)
 
 
 def render_retrieval_history(history):
@@ -16,7 +27,9 @@ def render_retrieval_history(history):
         for attempt in history:
             st.markdown(f"**Attempt {attempt['attempt']}** — query used: _{attempt['question_used']}_")
             for i, source in enumerate(attempt["sources"], start=1):
-                st.write(f"{i}. [{source['file_name']} · {source['content_type']}] {source['text'][:200]}...")
+                with st.container(border=True):
+                    st.caption(f"{i}. {display_name(source['file_name'])} · {source['content_type']} · score={source['score']:.3f}")
+                    st.markdown(source["text"])
 
 
 NODE_STATUS = {
@@ -56,6 +69,8 @@ if "uploads" not in st.session_state:
     st.session_state.uploads = []
 
 with st.sidebar:
+    debug_mode = st.toggle("Debug mode", value=DEBUG_MODE)
+
     st.header("Upload documents")
     uploaded_files = st.file_uploader(
         "Choose .txt, .pdf, or .md files",
@@ -87,41 +102,74 @@ with st.sidebar:
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "pending_question" not in st.session_state:
+    st.session_state.pending_question = None
+if "is_streaming" not in st.session_state:
+    st.session_state.is_streaming = False
+interrupted = st.session_state.is_streaming
+st.session_state.is_streaming = False
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
-        if message["role"] == "assistant" and message.get("path_taken"):
-            st.caption(f"Path: {message['path_taken']} · Retries: {message['retry_count']}")
-            if message.get("assess_reasoning"):
-                st.caption(f"Assess reasoning: {message['assess_reasoning']}")
-        if message["role"] == "assistant" and message.get("retrieval_history"):
+        if debug_mode and message["role"] == "assistant" and message.get("path_taken"):
+            with st.expander("🐛 Debug info ▸"):
+                st.caption(f"Path: {message['path_taken']} · Retries: {message['retry_count']}")
+                if message.get("assess_reasoning"):
+                    st.caption(f"Assess reasoning: {message['assess_reasoning']}")
+        if debug_mode and message["role"] == "assistant" and message.get("retrieval_history"):
             render_retrieval_history(message["retrieval_history"])
         if message["role"] == "assistant" and message.get("sources"):
             for i, source in enumerate(message["sources"], start=1):
-                with st.expander(f"Source {i}: {source['file_name']} · {source['content_type']} ▸"):
+                with st.expander(f"Source {i}: {display_name(source['file_name'])} · {source['content_type']} ▸"):
                     st.write(source["text"])
 
-if question := st.chat_input("Ask a question about your documents"):
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.write(question)
+pending_question = st.session_state.pending_question
 
-    with st.chat_message("assistant"):
-        status = st.empty()
-        result = {}
-        answer = st.write_stream(stream_query(question, status, result))
-        status.empty()
+if pending_question is None:
+    # Phase 1: a fresh submission. Stash it, draw the box disabled,
+    # and rerun immediately — before doing any slow backend work —
+    # so the disabled state has a chance to reach the browser first.
+    question = st.chat_input("Ask a question about your documents", disabled=False)
+    if question:
+        if interrupted:
+            st.warning("Please wait for the current response to finish before sending another question.")
+        else:
+            st.session_state.pending_question = question
+            st.session_state.messages.append({"role": "user", "content": question})
+            st.rerun()
+else:
+    # Phase 2: the disabled box was already flushed on the prior run.
+    if interrupted:
+        # A previous Phase 2 run was killed mid-stream by this very
+        # rerun (Streamlit tears down the running script on new input).
+        # Don't silently retry the stale question — drop it and warn.
+        st.session_state.pending_question = None
+        st.chat_input("Ask a question about your documents", disabled=False)
+        st.warning("Please wait for the current response to finish before sending another question.")
+    else:
+        st.chat_input("Ask a question about your documents", disabled=True)
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer,
-            "sources": result["sources"],
-            "path_taken": result["path_taken"],
-            "assess_reasoning": result["assess_reasoning"],
-            "retry_count": result["retry_count"],
-            "retrieval_history": result["retrieval_history"],
-        }
-    )
-    st.rerun()
+        st.session_state.is_streaming = True
+        st.session_state.pending_question = None
+        try:
+            with st.chat_message("assistant"):
+                status = st.empty()
+                result = {}
+                answer = st.write_stream(stream_query(pending_question, status, result))
+                status.empty()
+
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": result["sources"],
+                    "path_taken": result["path_taken"],
+                    "assess_reasoning": result["assess_reasoning"],
+                    "retry_count": result["retry_count"],
+                    "retrieval_history": result["retrieval_history"],
+                }
+            )
+        finally:
+            st.session_state.is_streaming = False
+        st.rerun()

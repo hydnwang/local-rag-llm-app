@@ -57,6 +57,7 @@ services:
       # now containerized alongside api, so it's reached by service name.
       - OLLAMA_URL=http://host.docker.internal:11434
       - DAGSTER_HOST=dagster
+      # - DEBUG_MODE=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -84,6 +85,7 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://api:8000
+      # - DEBUG_MODE=true
     depends_on:
       - api
     develop:
