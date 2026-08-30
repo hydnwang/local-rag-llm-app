@@ -7,25 +7,25 @@ Everything runs locally on Apple Silicon. The only native (non-Docker) service i
 ## Architecture
 
 ```
-┌─────────────┐      ┌─────────────┐      ┌───────────────────────────┐
-│  Streamlit  │─────▶│   FastAPI   │─────▶│  LangGraph orchestration  │
-│     UI      │◀─────│   (api)     │◀─────│                           │
-└─────────────┘ SSE  └──────┬──────┘      │   ┌──────────┐            │
-                             │             │   │ retrieve │◀────┐     │
-                             │             │   └────┬─────┘     │     │
-                             │             │        ▼           │     │
-                             │             │   ┌──────────┐     │     │
-                             │             │   │  assess  │     │     │
-                             │             │   └────┬─────┘     │     │
-                             │             │        │           │     │
-                             │             │   retry│           │pass │
-                             │             │        ▼           │  │  │
-                             │             │  ┌─────────────┐   │  │  │
-                             │             │  │ reformulate │───┘  │  │
-                             │             │  └─────────────┘      │  │
-                             │             └───────────────────────┼──┘
-                             │                                     ▼
-                             ▼                                generate
+┌─────────────┐      ┌─────────────┐      ┌──────────────────────────┐
+│  Streamlit  │─────▶│   FastAPI   │─────▶│  LangGraph orchestration │
+│     UI      │◀─────│   (api)     │◀─────│                          │
+└─────────────┘ SSE  └──────┬──────┘      │   ┌──────────┐           │
+                            │             │   │ retrieve │◀────┐     │
+                            │             │   └────┬─────┘     │     │
+                            │             │        ▼           │     │
+                            │             │   ┌──────────┐     │     │
+                            │             │   │  assess  │     │     │
+                            │             │   └────┬─────┘     │     │
+                            │             │        │           │     │
+                            │             │   retry│           │pass │
+                            │             │        ▼           │  │  │
+                            │             │  ┌─────────────┐   │  │  │
+                            │             │  │ reformulate │───┘  │  │
+                            │             │  └─────────────┘      │  │
+                            │             └───────────────────────┼──┘
+                            │                                     ▼
+                            ▼                                generate
                       ┌─────────────┐                              │
                       │   Qdrant    │◀───────────────────  Ollama (native,
                       │ (vectors)   │                        Metal GPU)
@@ -35,8 +35,8 @@ Everything runs locally on Apple Silicon. The only native (non-Docker) service i
                       │   Dagster   │      │  Prometheus │
                       │ (ingestion) │      │  + Grafana  │◀── latency
                       └─────────────┘      │ (query-side │    metrics
-                                            │  latency)   │
-                                            └─────────────┘
+                                           │  latency)   │
+                                           └─────────────┘
 ```
 
 **Query path:** the UI streams a question to FastAPI over SSE. A LangGraph state machine retrieves chunks from Qdrant, judges (via LLM-as-judge) whether the retrieved context is sufficient, reformulates and retries once if not, and — once judged sufficient — streams the final answer token-by-token straight from Ollama back through FastAPI to the UI.
