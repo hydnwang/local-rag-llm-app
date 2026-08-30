@@ -100,6 +100,24 @@ with st.sidebar:
             else:
                 st.error(upload["name"])
 
+    st.header("Manage files")
+    docs_response = httpx.get(f"{API_URL}/documents", timeout=30.0)
+    files = docs_response.json()["files"]
+
+    groups: dict[str, list[dict]] = {}
+    for f in files:
+        groups.setdefault(display_name(f["file_name"]), []).append(f)
+
+    for name in sorted(groups):
+        entries = sorted(groups[name], key=lambda f: f["ingested_at"] or "")
+        for entry in entries:
+            label = name if len(entries) == 1 else f"{name} — {entry['ingested_at']}"
+            col1, col2 = st.columns([4, 1])
+            col1.write(label)
+            if col2.button("🗑️", key=f"delete_{entry['file_name']}"):
+                httpx.delete(f"{API_URL}/documents/{entry['file_name']}", timeout=30.0)
+                st.rerun()
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_question" not in st.session_state:

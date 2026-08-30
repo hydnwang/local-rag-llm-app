@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from pathlib import Path
 
 from llama_index.core import Document
@@ -8,6 +9,7 @@ _TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 
 def load_md(file_path: str) -> list[Document]:
     file_name = Path(file_path).name
+    ingested_at = datetime.now().isoformat()
     with open(file_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
@@ -21,7 +23,7 @@ def load_md(file_path: str) -> list[Document]:
             if text:
                 documents.append(Document(
                     text=text,
-                    metadata={"file_name": file_name, "content_type": "text"},
+                    metadata={"file_name": file_name, "page": None, "content_type": "text", "ingested_at": ingested_at},
                 ))
             buffer.clear()
 
@@ -30,7 +32,7 @@ def load_md(file_path: str) -> list[Document]:
             text = "".join(table_buffer).strip()
             documents.append(Document(
                 text=text,
-                metadata={"file_name": file_name, "content_type": "table"},
+                metadata={"file_name": file_name, "page": None, "content_type": "table", "ingested_at": ingested_at},
             ))
             table_buffer.clear()
 

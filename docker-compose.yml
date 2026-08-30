@@ -72,6 +72,9 @@ services:
           path: ./api
           target: /app/api
         - action: sync+restart
+          path: ./ingestion
+          target: /app/ingestion
+        - action: sync+restart
           path: ./config.py
           target: /app/config.py
         - action: rebuild
@@ -112,6 +115,9 @@ services:
       - "3001:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
 
 volumes:
   qdrant_data:

@@ -15,6 +15,7 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
+from qdrant_client.http.models import FieldCondition, Filter, FilterSelector, MatchValue
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import (
@@ -26,6 +27,7 @@ from config import (
     TOP_K,
 )
 from api.graph import NODE_DURATION_SECONDS, build_generate_prompt, build_graph, sources_from_nodes, stream_ollama
+from ingestion.naming import make_ingest_name
 
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -78,6 +80,47 @@ async def health() -> JSONResponse:
 @app.get("/metrics")
 async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/documents")
+async def list_documents() -> dict:
+    if not client.collection_exists(COLLECTION_NAME):
+        return {"files": []}
+
+    seen: dict[str, str] = {}
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            with_payload=["file_name", "ingested_at"],
+            with_vectors=False,
+            limit=1000,
+            offset=offset,
+        )
+        for point in points:
+            file_name = point.payload.get("file_name")
+            if file_name and file_name not in seen:
+                seen[file_name] = point.payload.get("ingested_at")
+        if offset is None:
+            break
+
+    files = sorted(
+        [{"file_name": name, "ingested_at": ts} for name, ts in seen.items()],
+        key=lambda d: (d["file_name"], d["ingested_at"] or ""),
+    )
+    return {"files": files}
+
+
+@app.delete("/documents/{file_name}")
+async def delete_document(file_name: str) -> dict:
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=FilterSelector(
+            filter=Filter(must=[FieldCondition(key="file_name", match=MatchValue(value=file_name))])
+        ),
+    )
+    logger.info(f"DELETE /documents/{file_name}")
+    return {"status": "ok", "file_name": file_name}
 
 
 @app.post("/query")
@@ -149,7 +192,6 @@ async def query(request: QueryRequest) -> StreamingResponse:
 @app.post("/ingest")
 async def ingest_file(file: UploadFile) -> dict:
     import asyncio
-    import uuid
 
     from dagster_graphql import DagsterGraphQLClient
     from dagster._core.storage.dagster_run import DagsterRunStatus
@@ -161,7 +203,7 @@ async def ingest_file(file: UploadFile) -> dict:
     # runs as a separate process and may not pick up the run immediately, so the
     # file's lifetime can't be tied to this request's own control flow. It's only
     # deleted below once Dagster confirms the run reached a terminal state.
-    unique_name = f"{uuid.uuid4().hex}_{file.filename}"
+    unique_name = make_ingest_name(file.filename)
     ingest_path = INGEST_DIR / unique_name
     with open(ingest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)

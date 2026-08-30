@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import dagster as dg
-from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import BaseNode, TextNode
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import COLLECTION_NAME, EMBED_MODEL_NAME, QDRANT_URL
 from ingestion.pdf_loader import load_pdf
 from ingestion.md_loader import load_md
+from ingestion.txt_loader import load_txt
 
 
 class IngestConfig(dg.Config):
@@ -25,7 +26,7 @@ def raw_documents(config: IngestConfig) -> list[Document]:
         return load_pdf(config.file_path)
     if config.file_path.endswith(".md"):
         return load_md(config.file_path)
-    return SimpleDirectoryReader(input_files=[config.file_path]).load_data()
+    return load_txt(config.file_path)
 
 
 @dg.asset

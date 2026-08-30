@@ -1,4 +1,5 @@
 import pdfplumber
+from datetime import datetime
 from pathlib import Path
 from llama_index.core import Document
 
@@ -16,6 +17,7 @@ def _table_to_markdown(table: list[list[str]]) -> str:
 
 def load_pdf(file_path: str) -> list[Document]:
     file_name = Path(file_path).name
+    ingested_at = datetime.now().isoformat()
     documents = []
     with pdfplumber.open(file_path) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
@@ -23,7 +25,7 @@ def load_pdf(file_path: str) -> list[Document]:
             if text.strip():
                 documents.append(Document(
                     text=text,
-                    metadata={"file_name": file_name, "page": page_num, "content_type": "text"},
+                    metadata={"file_name": file_name, "page": page_num, "content_type": "text", "ingested_at": ingested_at},
                 ))
 
             for table in page.extract_tables():
@@ -32,7 +34,7 @@ def load_pdf(file_path: str) -> list[Document]:
                 md_table = _table_to_markdown(table)
                 documents.append(Document(
                     text=md_table,
-                    metadata={"file_name": file_name, "page": page_num, "content_type": "table"},
+                    metadata={"file_name": file_name, "page": page_num, "content_type": "table", "ingested_at": ingested_at},
                 ))
 
     return documents
